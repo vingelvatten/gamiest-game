@@ -1,0 +1,17 @@
+{
+  "name": "aethermoor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Aethermoor — A Massively Singleplayer RPG",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7"
+  }
+}
