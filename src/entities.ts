@@ -4,7 +4,7 @@
 // ============================================================================
 import { BAL, COL } from "./config";
 import { clamp, rng, TAU } from "./engine";
-import { CharStyle, drawCharacter, drawMonster, MonsterKind } from "./art";
+import { CharStyle, MonsterKind } from "./art";
 import { CLASSES, ClassId, levelFromXp, Stats, statsForClass } from "./progression";
 import type { World } from "./world";
 
@@ -24,13 +24,13 @@ export abstract class Entity {
   facing: Facing = "down";
   walk = 0;
   bob = 0;
+  heading = 0; // movement direction in radians, for 3D model facing
   alive = true;
   hurt = 0; // white-flash timer
   abstract kind: "player" | "monster" | "npc" | "sim";
   constructor(public x: number, public y: number) {}
   get sortY() { return this.y; }
   abstract update(world: World, dt: number): void;
-  abstract render(c: CanvasRenderingContext2D, world: World): void;
 
   protected animate(moving: boolean, dt: number, speedScale = 1) {
     if (moving) {
@@ -101,11 +101,7 @@ export class Player extends Entity {
     if (this.attackCd > 0) this.attackCd -= dt;
     if (this.invuln > 0) this.invuln -= dt;
 
-    if (this.isDead) {
-      this.respawnTimer -= dt;
-      if (this.respawnTimer <= 0) world.respawnPlayer();
-      return;
-    }
+    if (this.isDead) { this.animate(false, dt); return; }
 
     // passive regen
     this.stats.hp = Math.min(this.stats.maxHp, this.stats.hp + dt * (1.2 + this.level * 0.1));
@@ -114,15 +110,21 @@ export class Player extends Entity {
     const inp = world.input;
     if (world.uiBlockingInput) { this.animate(false, dt); return; }
 
-    let dx = 0, dy = 0;
-    if (inp.isDown("w", "arrowup")) dy -= 1;
-    if (inp.isDown("s", "arrowdown")) dy += 1;
-    if (inp.isDown("a", "arrowleft")) dx -= 1;
-    if (inp.isDown("d", "arrowright")) dx += 1;
+    // camera-relative movement: forward = away from camera, right = strafe
+    let mf = 0, mr = 0;
+    if (inp.isDown("w", "arrowup")) mf += 1;
+    if (inp.isDown("s", "arrowdown")) mf -= 1;
+    if (inp.isDown("d", "arrowright")) mr += 1;
+    if (inp.isDown("a", "arrowleft")) mr -= 1;
+    const yaw = world.viewYaw;
+    const fx = -Math.sin(yaw), fy = -Math.cos(yaw);
+    const rx = Math.cos(yaw), ry = -Math.sin(yaw);
+    let dx = fx * mf + rx * mr, dy = fy * mf + ry * mr;
     const moving = dx !== 0 || dy !== 0;
     if (moving) {
       const len = Math.hypot(dx, dy);
       dx /= len; dy /= len;
+      this.heading = Math.atan2(dy, dx);
       this.facing = facingFrom(dx, dy, this.facing);
       const sp = BAL.playerSpeed * this.stats.speed;
       world.moveEntity(this, dx * sp * dt, dy * sp * dt);
@@ -130,19 +132,6 @@ export class Player extends Entity {
     this.animate(moving, dt, this.stats.speed);
 
     world.tryPlayerActions(this, dt);
-  }
-
-  render(c: CanvasRenderingContext2D, world: World) {
-    const style: CharStyle = {
-      skin: "#e7b48a", hair: "#3a2c22",
-      body: CLASSES[this.cls].body, accent: CLASSES[this.cls].accent,
-      facing: this.facing, walk: this.walk, bob: this.bob,
-      attack: this.attackCd > BAL.attackCooldown - 0.16 ? 1 - (this.attackCd - (BAL.attackCooldown - 0.16)) / 0.16 : 0,
-      weapon: CLASSES[this.cls].weapon,
-    };
-    if (this.isDead) { c.globalAlpha = 0.4; }
-    drawCharacter(c, this.x, this.y, style, 1.08);
-    c.globalAlpha = 1;
   }
 }
 
@@ -195,15 +184,6 @@ export class Monster extends Entity {
     world.monsterAI(this, dt);
     this.animate(this.state === "chase" || this.state === "wander", dt);
   }
-
-  render(c: CanvasRenderingContext2D, world: World) {
-    drawMonster(c, this.x, this.y - this.bob, this.def.kind, this.walk, this.hurt, this.def.scale ?? 1);
-    if (this.hp < this.maxHp) {
-      const w = 26, hx = this.x - w / 2, hy = this.y - 26 - (this.def.scale ?? 1) * 6;
-      c.fillStyle = "rgba(0,0,0,0.5)"; c.fillRect(hx - 1, hy - 1, w + 2, 5);
-      c.fillStyle = COL.red; c.fillRect(hx, hy, w * clamp(this.hp / this.maxHp, 0, 1), 3);
-    }
-  }
 }
 
 // ----------------------------------------------------------------------------
@@ -242,19 +222,10 @@ export class Npc extends Entity {
     this.style.bob = this.bob;
     // turn toward the player when close
     const p = world.player;
-    if (Math.hypot(p.x - this.x, p.y - this.y) < 70) {
+    if (Math.hypot(p.x - this.x, p.y - this.y) < 90) {
       this.style.facing = facingFrom(p.x - this.x, p.y - this.y, this.style.facing);
+      this.heading = Math.atan2(p.y - this.y, p.x - this.x);
     }
-  }
-
-  render(c: CanvasRenderingContext2D, world: World) {
-    drawCharacter(c, this.x, this.y, this.style, 1.05);
-    // marker
-    const hasQuest = world.questMarker(this);
-    if (hasQuest === "available") bubbleMark(c, this.x, this.y - 30, "!", COL.gold);
-    else if (hasQuest === "turnin") bubbleMark(c, this.x, this.y - 30, "?", COL.green);
-    else if (this.role === "shop") bubbleMark(c, this.x, this.y - 30, "$", COL.gold);
-    nameTag(c, this.x, this.y + 14, this.name, COL.parchment);
   }
 }
 
@@ -271,16 +242,6 @@ export function nameTag(c: CanvasRenderingContext2D, x: number, y: number, text:
     c.font = "9px 'Segoe UI', sans-serif"; c.fillStyle = COL.gold;
     c.fillText(sub, x, y + 11);
   }
-}
-
-function bubbleMark(c: CanvasRenderingContext2D, x: number, y: number, ch: string, color: string) {
-  const b = Math.sin(performance.now() / 240) * 2;
-  c.fillStyle = "rgba(20,16,30,0.6)";
-  c.beginPath(); c.arc(x, y - b, 8, 0, TAU); c.fill();
-  c.fillStyle = color;
-  c.font = "bold 13px 'Segoe UI', sans-serif";
-  c.textAlign = "center"; c.textBaseline = "middle";
-  c.fillText(ch, x, y - b + 0.5);
 }
 
 export { rng };

@@ -4,9 +4,9 @@
 // ============================================================================
 import { COL } from "./config";
 import { clamp, dist, RNG, TAU } from "./engine";
-import { CharStyle, drawCharacter, MonsterKind } from "./art";
+import { MonsterKind } from "./art";
 import { CLASSES, ClassId, levelFromXp, statsForClass } from "./progression";
-import { Entity, Facing, facingFrom, Monster, nameTag } from "./entities";
+import { Entity, Facing, facingFrom, Monster } from "./entities";
 import { meleeSwing, Projectile } from "./combat";
 import { ITEMS } from "./items";
 import type { World } from "./world";
@@ -178,7 +178,7 @@ export class SimPlayer extends Entity {
     if (this.state === "flee" && nearest) {
       const a = Math.atan2(this.y - nearest.y, this.x - nearest.x);
       moving = world.moveEntity(this, Math.cos(a) * sp * dt, Math.sin(a) * sp * dt);
-      this.facing = facingFrom(Math.cos(a), Math.sin(a), this.facing);
+      this.facing = facingFrom(Math.cos(a), Math.sin(a), this.facing); this.heading = a;
       if (this.potCd <= 0 && world.rng.chance(0.02)) {
         this.hp = Math.min(this.maxHp, this.hp + this.maxHp * 0.4); this.potCd = 6;
         world.spawnDamage(this.x, this.y - 16, `+${Math.round(this.maxHp * 0.4)}`, COL.green);
@@ -187,7 +187,7 @@ export class SimPlayer extends Entity {
       if (nd > 38) {
         const a = Math.atan2(nearest.y - this.y, nearest.x - this.x);
         moving = world.moveEntity(this, Math.cos(a) * sp * dt, Math.sin(a) * sp * dt);
-        this.facing = facingFrom(Math.cos(a), Math.sin(a), this.facing);
+        this.facing = facingFrom(Math.cos(a), Math.sin(a), this.facing); this.heading = a;
       }
       if (nd < 90 && this.attackCd <= 0) this.attack(world, nearest);
     } else {
@@ -197,7 +197,7 @@ export class SimPlayer extends Entity {
       } else {
         const a = Math.atan2(this.wy - this.y, this.wx - this.x);
         moving = world.moveEntity(this, Math.cos(a) * sp * 0.7 * dt, Math.sin(a) * sp * 0.7 * dt);
-        this.facing = facingFrom(Math.cos(a), Math.sin(a), this.facing);
+        this.facing = facingFrom(Math.cos(a), Math.sin(a), this.facing); this.heading = a;
       }
     }
     this.animate(moving, dt, this.speed);
@@ -213,7 +213,7 @@ export class SimPlayer extends Entity {
   private attack(world: World, m: Monster) {
     const dx = m.x - this.x, dy = m.y - this.y, len = Math.hypot(dx, dy) || 1;
     const nx = dx / len, ny = dy / len;
-    this.facing = facingFrom(nx, ny, this.facing);
+    this.facing = facingFrom(nx, ny, this.facing); this.heading = Math.atan2(ny, nx);
     const w = CLASSES[this.rec.cls].weapon;
     if (w === "sword") {
       meleeSwing(world, this.x, this.y, nx, ny, this.atk, this.crit, 48, Math.PI * 0.8, "#fff4d0", this);
@@ -226,52 +226,6 @@ export class SimPlayer extends Entity {
     this.attackCd = 0.62;
   }
 
-  render(c: CanvasRenderingContext2D, world: World) {
-    const style: CharStyle = {
-      skin: this.rec.style.skin, hair: this.rec.style.hair,
-      body: this.rec.style.body, accent: this.rec.style.accent,
-      facing: this.facing, walk: this.walk, bob: this.bob,
-      attack: this.attackCd > 0.5 ? 1 : 0, weapon: CLASSES[this.rec.cls].weapon,
-    };
-    if (this.dead) c.globalAlpha = 0.35;
-    drawCharacter(c, this.x, this.y, style, 1.0);
-    c.globalAlpha = 1;
-    if (!this.dead && this.hp < this.maxHp) {
-      const w = 24, hx = this.x - w / 2, hy = this.y - 24;
-      c.fillStyle = "rgba(0,0,0,0.45)"; c.fillRect(hx - 1, hy - 1, w + 2, 4);
-      c.fillStyle = COL.green; c.fillRect(hx, hy, w * clamp(this.hp / this.maxHp, 0, 1), 2);
-    }
-    const tag = this.rec.guildTag ? `[${this.rec.guildTag}] ${this.rec.name}` : this.rec.name;
-    nameTag(c, this.x, this.y + 14, tag, this.dead ? "#b9b3c4" : "#bfe0ff", `Lv ${this.rec.level}`);
-    if (this.bubble) chatBubble(c, this.x, this.y - 30, this.bubble.text);
-  }
-}
-
-function chatBubble(c: CanvasRenderingContext2D, x: number, y: number, text: string) {
-  c.font = "11px 'Segoe UI', sans-serif";
-  const w = Math.min(180, c.measureText(text).width + 14);
-  const lines = wrap(c, text, w - 12);
-  const h = 8 + lines.length * 13;
-  const bx = x - w / 2, by = y - h;
-  c.fillStyle = "rgba(244,233,208,0.96)";
-  roundRectPath(c, bx, by, w, h, 6); c.fill();
-  c.beginPath(); c.moveTo(x - 5, by + h); c.lineTo(x + 5, by + h); c.lineTo(x, by + h + 6); c.fill();
-  c.fillStyle = COL.ink; c.textAlign = "center"; c.textBaseline = "middle";
-  lines.forEach((ln, i) => c.fillText(ln, x, by + 9 + i * 13));
-}
-function roundRectPath(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  c.beginPath(); c.moveTo(x + r, y);
-  c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
-  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
-}
-function wrap(c: CanvasRenderingContext2D, text: string, maxW: number): string[] {
-  const words = text.split(" "); const lines: string[] = []; let cur = "";
-  for (const w of words) {
-    const t = cur ? cur + " " + w : w;
-    if (c.measureText(t).width > maxW && cur) { lines.push(cur); cur = w; } else cur = t;
-  }
-  if (cur) lines.push(cur);
-  return lines.slice(0, 3);
 }
 
 // ---- chat ------------------------------------------------------------------

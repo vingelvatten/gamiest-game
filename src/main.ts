@@ -8,64 +8,99 @@ import { CLASSES, ClassId } from "./progression";
 import { addItem } from "./items";
 import { Player } from "./entities";
 import { World } from "./world";
-import { UI } from "./ui";
-import { applySaveData, hasSave, readSave, saveGame } from "./state";
+import { UI, fmtTime } from "./ui";
+import { View3D } from "./view3d";
+import { applySaveData, clearSave, readSave, saveGame } from "./state";
 
 const app = document.getElementById("app")!;
+const randSeed = () => (Math.random() * 0xffffffff) >>> 0;
+function parseCode(s: string): number | null {
+  const n = parseInt((s || "").replace(/[^a-z0-9]/gi, ""), 36);
+  return Number.isFinite(n) ? (n >>> 0) : null;
+}
 
-// ---- canvas ----------------------------------------------------------------
-const canvas = document.createElement("canvas");
-canvas.id = "game";
-app.appendChild(canvas);
-const ctx = canvas.getContext("2d")!;
+// ---- canvases: WebGL world (behind) + 2D label overlay (on top) ------------
+const glCanvas = document.createElement("canvas");
+glCanvas.id = "game";
+const overlayCanvas = document.createElement("canvas");
+overlayCanvas.id = "overlay";
+app.appendChild(glCanvas);
+app.appendChild(overlayCanvas);
 
 function fit() {
-  canvas.width = Math.floor(window.innerWidth);
-  canvas.height = Math.floor(window.innerHeight);
+  const w = Math.floor(window.innerWidth), h = Math.floor(window.innerHeight);
+  glCanvas.width = w; glCanvas.height = h;
+  view3d?.setSize(w, h);
 }
-fit();
 
 // ---- screens ---------------------------------------------------------------
 function clearScreens() { document.querySelectorAll(".screen").forEach((s) => s.remove()); }
 
 function showTitle() {
   clearScreens();
+  const save = readSave();
+  const canContinue = save && save.runState === "playing";
   const s = document.createElement("div"); s.className = "screen title-screen";
-  const cont = hasSave() ? `<button id="continue" class="big-btn primary">Continue</button>` : "";
   s.innerHTML = `
     <div class="title-stars"></div>
     <div class="title-inner">
       <h1 class="game-title">Aethermoor</h1>
-      <p class="tagline">A Massively <i>Singleplayer</i> RPG</p>
+      <p class="tagline">A Massively <i>Singleplayer</i> Roguelike</p>
       <div class="title-buttons">
-        ${cont}
-        <button id="newgame" class="big-btn${hasSave() ? "" : " primary"}">New Game</button>
+        ${canContinue ? `<button id="continue" class="big-btn primary">Resume Run <span class="btn-sub">${fmtTime(save.runTime || 0)}</span></button>` : ""}
+        <button id="newrun" class="big-btn${canContinue ? "" : " primary"}">New Run</button>
+        <button id="entercode" class="big-btn">Enter Race Code</button>
       </div>
-      <p class="title-foot">A living world of simulated adventurers — hunt, level, and climb the ranks.</p>
+      <p class="title-foot">Race a seeded world and slay the Ancient Golem — fastest time wins. Share your code so friends run the exact same world.</p>
     </div>`;
   app.appendChild(s);
-  (document.getElementById("continue") as HTMLButtonElement | null)?.addEventListener("click", () => {
+  document.getElementById("continue")?.addEventListener("click", () => {
     const data = readSave();
-    if (!data) return showClassSelect();
+    if (!data) return showClassSelect(randSeed());
     const p = new Player(0, 0, data.player.cls as ClassId, data.player.name || "Hero");
-    startGame(p, data);
+    startGame(p, data, (data.seed ?? randSeed()) >>> 0);
   });
-  document.getElementById("newgame")!.addEventListener("click", showClassSelect);
+  document.getElementById("newrun")!.addEventListener("click", () => showClassSelect(randSeed()));
+  document.getElementById("entercode")!.addEventListener("click", showCodeEntry);
 }
 
-function showClassSelect() {
+function showCodeEntry() {
+  clearScreens();
+  const s = document.createElement("div"); s.className = "screen class-screen";
+  s.innerHTML = `
+    <div class="cs-inner narrow">
+      <h2>Enter a race code</h2>
+      <p class="cs-hint">Paste a friend's code to run the exact same seeded world.</p>
+      <input id="code-input" class="code-input" maxlength="10" placeholder="e.g. 3X9F2K" autocomplete="off" />
+      <div class="title-buttons">
+        <button id="code-go" class="big-btn primary">Start</button>
+        <button id="code-back" class="big-btn">Back</button>
+      </div>
+    </div>`;
+  app.appendChild(s);
+  const input = document.getElementById("code-input") as HTMLInputElement;
+  input.focus();
+  const go = () => { const seed = parseCode(input.value); if (seed == null) { input.classList.add("bad"); return; } showClassSelect(seed); };
+  document.getElementById("code-go")!.addEventListener("click", go);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  document.getElementById("code-back")!.addEventListener("click", showTitle);
+}
+
+function showClassSelect(seed: number) {
   clearScreens();
   let chosen: ClassId = "warrior";
+  const code = (seed >>> 0).toString(36).toUpperCase().padStart(6, "0");
   const s = document.createElement("div"); s.className = "screen class-screen";
   s.innerHTML = `
     <div class="cs-inner">
       <h2>Choose your path</h2>
+      <p class="cs-code">Race code <b>${code}</b></p>
       <div class="class-cards"></div>
       <div class="name-row">
         <label>Name your hero</label>
         <input id="hero-name" maxlength="14" value="Aria" />
       </div>
-      <button id="begin" class="big-btn primary">Begin your journey</button>
+      <button id="begin" class="big-btn primary">Begin the run</button>
     </div>`;
   app.appendChild(s);
   const cards = s.querySelector(".class-cards")!;
@@ -93,47 +128,74 @@ function showClassSelect() {
   document.getElementById("begin")!.addEventListener("click", () => {
     const name = (document.getElementById("hero-name") as HTMLInputElement).value.trim() || "Hero";
     const p = new Player(0, 0, chosen, name);
-    startNewGame(p);
+    startRun(p, seed);
   });
 }
 
 // ---- game ------------------------------------------------------------------
 let world: World | null = null;
 let ui: UI | null = null;
+let view3d: View3D | null = null;
 
-function startNewGame(player: Player) {
+function startRun(player: Player, seed: number) {
   // starting kit by class
   const kit: Record<ClassId, string> = { warrior: "rusty_sword", mage: "oak_staff", ranger: "hunting_bow" };
   player.equipment.weapon = kit[player.cls];
   player.equipment.armor = "cloth_tunic";
-  startGame(player, null);
-  // give some pots after world exists
+  startGame(player, null, seed);
   addItem(player.inventory, "minor_potion", 4);
   world!.recomputePlayerStats();
   player.stats.hp = player.stats.maxHp; player.stats.mp = player.stats.maxMp;
   world!.enterZone("town");
   ui!.refresh();
-  world!.notify("Welcome to Aethermoor! Press H for help. Find Elder Maeve (the ! marker).");
+  world!.notify(`Run begins! Slay the Ancient Golem in the Sunken Ruins. Press H for help.`);
   saveGame(world!);
 }
 
-function startGame(player: Player, save: any | null) {
+function startGame(player: Player, save: any | null, seed: number) {
   clearScreens();
-  world = new World(player, canvas.width, canvas.height);
+  world = new World(player, window.innerWidth, window.innerHeight, seed);
   ui = new UI(world);
   world.ui = ui;
+  view3d = new View3D(glCanvas, overlayCanvas, world);
+  world.input.attach(overlayCanvas);
   world.onAutosave = () => saveGame(world!);
+  world.onRunEnd = (state) => showEndScreen(state);
   if (save) applySaveData(world, save);
   else if (!world.zone) world.enterZone("town");
 
-  window.addEventListener("resize", () => {
-    fit();
-    if (world) { world.camera.vw = canvas.width; world.camera.vh = canvas.height; }
-  });
-  // save on tab close
-  window.addEventListener("beforeunload", () => { if (world) saveGame(world); });
+  window.addEventListener("resize", fit);
+  // save on tab close (only while a run is in progress)
+  window.addEventListener("beforeunload", () => { if (world && world.runState === "playing") saveGame(world); });
 
   startLoop();
+}
+
+function showEndScreen(state: "won" | "dead") {
+  view3d?.releaseLook();
+  clearSave(); // a finished run is not resumable
+  const w = world!;
+  const win = state === "won";
+  const s = document.createElement("div"); s.className = `screen end-screen ${win ? "win" : "dead"}`;
+  s.innerHTML = `
+    <div class="end-inner">
+      <h1 class="end-title">${win ? "Golem Slain!" : "You Fell…"}</h1>
+      <div class="end-time">${fmtTime(w.runTime)}</div>
+      <p class="end-sub">${win ? "Boss cleared — now beat this time." : `Reached ${w.zone.name} · Level ${w.player.level}`}</p>
+      <div class="end-code">RACE CODE <b>${w.code}</b> <button id="copycode" class="copy-btn">Copy</button></div>
+      <p class="end-share">Send this code to a friend to race the identical world.</p>
+      <div class="title-buttons">
+        <button id="retry" class="big-btn primary">Retry This Seed</button>
+        <button id="newrun2" class="big-btn">New Random Run</button>
+      </div>
+    </div>`;
+  app.appendChild(s);
+  document.getElementById("copycode")!.addEventListener("click", (e) => {
+    navigator.clipboard?.writeText(w.code).catch(() => {});
+    (e.target as HTMLElement).textContent = "Copied!";
+  });
+  document.getElementById("retry")!.addEventListener("click", () => { sessionStorage.setItem("pendingSeed", String(w.runSeed)); location.reload(); });
+  document.getElementById("newrun2")!.addEventListener("click", () => { sessionStorage.setItem("pendingSeed", String(randSeed())); location.reload(); });
 }
 
 let running = false;
@@ -156,18 +218,20 @@ function startLoop() {
 }
 
 function render() {
-  if (!world) return;
-  world.render(ctx);
+  if (world && view3d) view3d.render(world);
 }
 
-// kick off
-showTitle();
+// kick off — resume a pending run after a reload, else show the title
+const pendingSeed = sessionStorage.getItem("pendingSeed");
+if (pendingSeed != null) { sessionStorage.removeItem("pendingSeed"); showClassSelect(parseInt(pendingSeed, 10) >>> 0); }
+else showTitle();
 
 // expose a tiny dev handle
 (window as any).__aether = {
   newGame: () => { localStorage.clear(); location.reload(); },
   get world() { return world; },
   get ui() { return ui; },
+  get view3d() { return view3d; },
 };
 
 // quiet unused-import lint in some configs

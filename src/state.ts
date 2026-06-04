@@ -13,7 +13,8 @@ export function clearSave() { localStorage.removeItem(SAVE_KEY); }
 export function saveGame(world: World) {
   const p = world.player;
   const data = {
-    v: 1, ts: Date.now(),
+    v: 2, ts: Date.now(),
+    seed: world.runSeed, runTime: world.runTime, runState: world.runState,
     player: {
       name: p.name, cls: p.cls, level: p.level, xp: p.xp, gold: p.gold,
       hp: p.stats.hp, mp: p.stats.mp, equipment: p.equipment, inventory: p.inventory,
@@ -27,6 +28,8 @@ export function saveGame(world: World) {
 
 export function applySaveData(world: World, data: any) {
   const p = world.player, d = data.player ?? {};
+  world.runTime = data.runTime ?? 0;
+  world.runState = data.runState ?? "playing";
   p.level = d.level ?? 1; p.xp = d.xp ?? 0; p.gold = d.gold ?? 0;
   p.kills = d.kills ?? {}; p.deaths = d.deaths ?? 0;
   p.equipment = d.equipment ?? { weapon: null, armor: null, trinket: null };

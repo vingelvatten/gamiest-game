@@ -19,7 +19,8 @@
 html, body { height: 100%; overflow: hidden; background: #0e0b16; }
 body { font-family: "Segoe UI", system-ui, sans-serif; color: var(--parch); user-select: none; -webkit-font-smoothing: antialiased; }
 #app { position: fixed; inset: 0; }
-canvas#game { position: fixed; inset: 0; z-index: 0; display: block; cursor: crosshair; }
+canvas#game { position: fixed; inset: 0; z-index: 0; display: block; pointer-events: none; }
+canvas#overlay { position: fixed; inset: 0; z-index: 1; display: block; cursor: crosshair; }
 kbd {
   font-family: inherit; font-size: 10px; background: rgba(0, 0, 0, 0.4);
   border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--gold);
@@ -284,3 +285,35 @@ kbd {
   .slot { width: 50px; height: 50px; }
   .class-cards { grid-template-columns: 1fr; }
 }
+
+/* ===========================================================================
+   Roguelike run HUD, race-code entry, and win/death screens
+   =========================================================================== */
+.run-info { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; }
+.run-timer { font-size: 30px; font-weight: 800; color: #fff; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85); font-variant-numeric: tabular-nums; }
+.run-obj { font-size: 12px; color: var(--gold); font-weight: 700; text-shadow: 0 1px 3px #000; margin-top: -3px; }
+.run-code { font-size: 10px; color: var(--parch2); letter-spacing: 0.6px; text-shadow: 0 1px 2px #000; }
+.run-code b { color: var(--parch); }
+.btn-sub { font-size: 11px; opacity: 0.85; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.cs-code { font-size: 14px; color: var(--parch2); margin-bottom: 16px; }
+.cs-code b { color: var(--gold); letter-spacing: 3px; font-size: 16px; }
+.cs-hint { font-size: 13px; color: var(--parch2); margin-bottom: 18px; }
+.cs-inner.narrow { width: min(440px, 92vw); }
+.code-input { font-family: inherit; font-size: 26px; letter-spacing: 6px; text-transform: uppercase; text-align: center; color: var(--gold); background: rgba(0, 0, 0, 0.4); border: 2px solid var(--line); border-radius: 12px; padding: 14px; width: 100%; margin-bottom: 22px; }
+.code-input:focus { outline: none; border-color: var(--gold); }
+.code-input.bad { border-color: var(--red); animation: shake 0.3s; }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-7px); } 75% { transform: translateX(7px); } }
+
+.end-screen { background: radial-gradient(circle at 50% 38%, rgba(24, 18, 38, 0.72), rgba(8, 6, 14, 0.93)); backdrop-filter: blur(3px); }
+.end-inner { text-align: center; animation: fadein 0.5s ease; padding: 20px; }
+.end-title { font-family: Georgia, serif; font-size: clamp(40px, 8vw, 60px); font-weight: 800; text-shadow: 0 4px 16px rgba(0, 0, 0, 0.7); }
+.end-screen.win .end-title { color: var(--gold); text-shadow: 0 0 44px rgba(243, 201, 105, 0.6), 0 4px 16px rgba(0, 0, 0, 0.7); }
+.end-screen.dead .end-title { color: var(--red); }
+.end-time { font-size: clamp(48px, 10vw, 66px); font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; margin: 4px 0; text-shadow: 0 3px 14px rgba(0, 0, 0, 0.8); letter-spacing: 1px; }
+.end-sub { font-size: 15px; color: var(--parch2); margin-bottom: 22px; }
+.end-code { font-size: 14px; color: var(--parch2); letter-spacing: 1px; margin-bottom: 6px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.end-code b { color: var(--gold); font-size: 22px; letter-spacing: 3px; }
+.copy-btn { background: var(--gold); color: var(--ink); border: none; border-radius: 8px; padding: 5px 13px; font-weight: 700; cursor: pointer; font-size: 12px; }
+.copy-btn:hover { filter: brightness(1.08); }
+.end-share { font-size: 12px; color: var(--parch2); opacity: 0.75; margin-bottom: 28px; }

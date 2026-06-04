@@ -11,19 +11,9 @@ import type { World } from "./world";
 
 // ---- floaters & particles --------------------------------------------------
 export class DamageNumber {
-  life = 0.85; vy = -34;
+  life = 0.85; age = 0; // age drives the upward float; x,y are the world anchor
   constructor(public x: number, public y: number, public text: string, public color: string, public big = false) {}
-  update(dt: number) { this.y += this.vy * dt; this.vy += 60 * dt; this.life -= dt; }
-  render(c: CanvasRenderingContext2D) {
-    const a = Math.min(1, this.life * 2.2);
-    c.globalAlpha = a;
-    c.font = `bold ${this.big ? 18 : 13}px 'Segoe UI', sans-serif`;
-    c.textAlign = "center"; c.textBaseline = "middle";
-    c.lineWidth = 3; c.strokeStyle = "rgba(20,16,30,0.8)";
-    c.strokeText(this.text, this.x, this.y);
-    c.fillStyle = this.color; c.fillText(this.text, this.x, this.y);
-    c.globalAlpha = 1;
-  }
+  update(dt: number) { this.age += dt; this.life -= dt; }
 }
 
 export class Particle {
@@ -137,17 +127,20 @@ export function computeDamage(atk: number, def: number, crit: number) {
   return { dmg: Math.max(1, Math.round(dmg)), crit: isCrit };
 }
 
-// aim direction: toward mouse if available, else facing
+// aim direction: along the player's heading (camera-forward), with a soft
+// auto-aim that snaps toward the nearest enemy inside a frontal cone.
 export function aimDir(world: World, px: number, py: number): { dx: number; dy: number } {
-  const m = world.input.mouse;
-  const wx = m.x + world.camera.x, wy = m.y + world.camera.y;
-  let dx = wx - px, dy = wy - py;
-  const len = Math.hypot(dx, dy);
-  if (len < 1) {
-    const f = world.player.facing;
-    return f === "left" ? { dx: -1, dy: 0 } : f === "right" ? { dx: 1, dy: 0 } : f === "up" ? { dx: 0, dy: -1 } : { dx: 0, dy: 1 };
+  const h = world.player.heading;
+  let dx = Math.cos(h), dy = Math.sin(h);
+  let best: Monster | null = null, bestDot = 0.5;
+  for (const m of world.monsters()) {
+    const mx = m.x - px, my = m.y - py, d = Math.hypot(mx, my);
+    if (d < 1 || d > 380) continue;
+    const dot = (mx / d) * dx + (my / d) * dy;
+    if (dot > bestDot) { bestDot = dot; best = m; }
   }
-  return { dx: dx / len, dy: dy / len };
+  if (best) { const mx = best.x - px, my = best.y - py, d = Math.hypot(mx, my) || 1; dx = mx / d; dy = my / d; }
+  return { dx, dy };
 }
 
 // ---- player attacks --------------------------------------------------------

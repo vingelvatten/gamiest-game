@@ -44,9 +44,9 @@ function house(g: Grid, x: number, y: number, w: number, h: number, roof: T, doo
 }
 
 // ---------------------------------------------------------------------------
-function buildTown(): ZoneDef {
+function buildTown(seed: number): ZoneDef {
   const w = 42, h = 34, g = new Grid(w, h, T.Grass);
-  const rng = new RNG(101);
+  const rng = new RNG(seed);
   // grass texture variety
   for (let i = 0; i < g.t.length; i++) if (rng.chance(0.12)) g.t[i] = T.GrassAlt;
   g.border(T.StoneWall, 1);
@@ -89,9 +89,9 @@ function buildTown(): ZoneDef {
 }
 
 // ---------------------------------------------------------------------------
-function buildGreenfields(): ZoneDef {
+function buildGreenfields(seed: number): ZoneDef {
   const w = 54, h = 40, g = new Grid(w, h, T.Grass);
-  const rng = new RNG(202);
+  const rng = new RNG(seed);
   for (let i = 0; i < g.t.length; i++) if (rng.chance(0.16)) g.t[i] = T.GrassAlt;
 
   // forest edges (top & bottom bands of trees)
@@ -137,9 +137,9 @@ function buildGreenfields(): ZoneDef {
 }
 
 // ---------------------------------------------------------------------------
-function buildDarkwood(): ZoneDef {
+function buildDarkwood(seed: number): ZoneDef {
   const w = 54, h = 42, g = new Grid(w, h, T.DarkGrass);
-  const rng = new RNG(303);
+  const rng = new RNG(seed);
   // dense dark trees
   for (let i = 0; i < 360; i++) {
     const x = rng.int(1, w - 2), y = rng.int(1, h - 2);
@@ -176,9 +176,9 @@ function buildDarkwood(): ZoneDef {
 }
 
 // ---------------------------------------------------------------------------
-function buildRuins(): ZoneDef {
+function buildRuins(seed: number): ZoneDef {
   const w = 50, h = 42, g = new Grid(w, h, T.RuinFloor);
-  const rng = new RNG(404);
+  const rng = new RNG(seed);
   for (let i = 0; i < g.t.length; i++) { const r = rng.next(); if (r < 0.14) g.t[i] = T.DarkGrass; else if (r < 0.18) g.t[i] = T.Grass; }
   g.border(T.RuinStone, 1);
 
@@ -210,6 +210,14 @@ function buildRuins(): ZoneDef {
   };
 }
 
-export function buildZones(): Record<string, ZoneDef> {
-  return { town: buildTown(), greenfields: buildGreenfields(), darkwood: buildDarkwood(), ruins: buildRuins() };
+// Every zone's layout derives from the run seed, so a given code reproduces
+// the exact same world for everyone racing it.
+export function buildZones(seed: number): Record<string, ZoneDef> {
+  const s = seed >>> 0;
+  return {
+    town: buildTown((s ^ 0x1a2b) >>> 0),
+    greenfields: buildGreenfields((s ^ 0x2c3d) >>> 0),
+    darkwood: buildDarkwood((s ^ 0x3e4f) >>> 0),
+    ruins: buildRuins((s ^ 0x4f60) >>> 0),
+  };
 }

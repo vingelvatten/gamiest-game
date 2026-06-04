@@ -4,8 +4,8 @@
 // ============================================================================
 import { BAL, COL, T, TILE, TILES } from "./config";
 import { Camera, clamp, dist, Input, RNG, rng } from "./engine";
-import { drawCoin, drawTile, MonsterKind } from "./art";
-import { Entity, Monster, MonsterDef, nameTag, Npc, Player } from "./entities";
+import { drawTile, MonsterKind } from "./art";
+import { Entity, Monster, MonsterDef, Npc, Player } from "./entities";
 import { ABILITIES, aimDir, basicAttack, burst, DamageNumber, Particle, Projectile } from "./combat";
 import { SimDirector, SimPlayer } from "./simulation";
 import { QuestLog, QUESTS } from "./quests";
@@ -61,21 +61,39 @@ export class World {
   ground: GroundItem[] = [];
 
   time = 0;
+  viewYaw = 0; // current camera yaw (radians), written by view3d, read by movement/aim
+  // roguelike run state
+  runSeed = 0;
+  runTime = 0;             // seconds elapsed this run
+  runState: "playing" | "won" | "dead" = "playing";
+  onRunEnd?: (state: "won" | "dead") => void;
   private portalCd = 0;
   private respawnTimers: { kind: MonsterKind; lvlMin: number; lvlMax: number; t: number }[] = [];
   private bossTimer = 0;
   private saveT = BAL.autosaveInterval;
   onAutosave?: () => void;
 
-  constructor(player: Player, vw: number, vh: number) {
+  constructor(player: Player, vw: number, vh: number, seed: number) {
     this.player = player;
+    this.runSeed = seed >>> 0;
     this.camera = new Camera(vw, vh);
-    this.zones = buildZones();
-    this.sim = new SimDirector(this, BAL.simCount);
-    this.input.attach(document.querySelector("canvas")!);
+    this.rng = new RNG(this.runSeed);
+    this.zones = buildZones(this.runSeed);
+    this.sim = new SimDirector(this, BAL.simCount, (this.runSeed ^ 0x5d7e) >>> 0);
+    // input is attached to the overlay canvas by main.ts after canvases exist
   }
 
-  get uiBlockingInput() { return this.ui?.isModalOpen() ?? false; }
+  // short shareable race code (friends play the identical seeded world)
+  get code() { return (this.runSeed >>> 0).toString(36).toUpperCase().padStart(6, "0"); }
+
+  endRun(state: "won" | "dead") {
+    if (this.runState !== "playing") return;
+    this.runState = state;
+    this.onRunEnd?.(state);
+  }
+
+  // player input is also blocked while the run is over (win/death screens)
+  get uiBlockingInput() { return (this.ui?.isModalOpen() ?? false) || this.runState !== "playing"; }
 
   // ---- tiles / collision --------------------------------------------------
   tileAt(px: number, py: number): T {
@@ -170,8 +188,13 @@ export class World {
     const cv = document.createElement("canvas");
     cv.width = z.w * TILE; cv.height = z.h * TILE;
     const c = cv.getContext("2d")!;
-    for (let y = 0; y < z.h; y++) for (let x = 0; x < z.w; x++)
-      drawTile(c, z.tiles[y * z.w + x] as T, x * TILE, y * TILE, x, y);
+    for (let y = 0; y < z.h; y++) for (let x = 0; x < z.w; x++) {
+      // foliage is drawn as 3D billboards, so under them draw plain ground
+      let t = z.tiles[y * z.w + x] as T;
+      if (t === T.Tree || t === T.Bush || t === T.Flower) t = T.Grass;
+      else if (t === T.DarkTree) t = T.DarkGrass;
+      drawTile(c, t, x * TILE, y * TILE, x, y);
+    }
     return cv;
   }
 
@@ -215,7 +238,7 @@ export class World {
         this.ground.push({ x: m.x, y: m.y, vx: this.rng.range(-40, 40), vy: this.rng.range(-60, -20), t: 0, itemId: it.id, qty: it.qty });
         if (ITEMS[it.id] && (ITEMS[it.id].rarity === "rare" || ITEMS[it.id].rarity === "epic")) this.sim.reactPlayerLoot(it.id);
       }
-      if (m.def.kind === "golem") { this.ui?.toast("The Ancient Golem crumbles to dust!"); this.sim.chat.system(`${this.player.name} defeated the Ancient Golem!`); }
+      if (m.def.kind === "golem") { this.sim.chat.system(`${this.player.name} defeated the Ancient Golem!`); this.endRun("won"); }
     }
   }
 
@@ -229,9 +252,8 @@ export class World {
     this.ui?.onPlayerDamaged();
     if (p.stats.hp <= 0) {
       p.deaths++;
-      p.respawnTimer = BAL.respawnTime;
-      this.ui?.toast("You have fallen! Respawning in town…");
       this.sim.reactPlayerDeath();
+      this.endRun("dead"); // permadeath — the run is over
     }
   }
 
@@ -379,6 +401,7 @@ export class World {
   // ---- main tick ----------------------------------------------------------
   update(dt: number) {
     this.time += dt;
+    if (this.runState === "playing") this.runTime += dt;
     if (this.portalCd > 0) this.portalCd -= dt;
 
     this.player.update(this, dt);
@@ -410,12 +433,12 @@ export class World {
 
     this.sim.update(dt);
 
-    this.camera.follow(this.player.x, this.player.y, this.zone.w * TILE, this.zone.h * TILE, dt);
+    // (the 3D follow-camera lives in view3d; world only tracks player position)
     this.checkPortals();
 
     // autosave
     this.saveT -= dt;
-    if (this.saveT <= 0) { this.saveT = BAL.autosaveInterval; this.onAutosave?.(); }
+    if (this.saveT <= 0) { this.saveT = BAL.autosaveInterval; if (this.runState === "playing") this.onAutosave?.(); }
 
     this.input.endFrame();
   }
@@ -464,62 +487,7 @@ export class World {
     }
   }
 
-  // ---- render -------------------------------------------------------------
-  render(c: CanvasRenderingContext2D) {
-    const cam = this.camera;
-    c.imageSmoothingEnabled = false;
-    // sky/letterbox fill
-    c.fillStyle = this.zone.ambient === "dark" ? "#1d2730" : this.zone.ambient === "ruins" ? "#2a2622" : "#23303a";
-    c.fillRect(0, 0, cam.vw, cam.vh);
-
-    c.save();
-    c.translate(-cam.ox, -cam.oy);
-
-    // ground (blit visible region of the prerendered zone)
-    if (this.zone.bg) {
-      const sx = Math.max(0, cam.ox), sy = Math.max(0, cam.oy);
-      const sw = Math.min(this.zone.bg.width - sx, cam.vw + 2), sh = Math.min(this.zone.bg.height - sy, cam.vh + 2);
-      if (sw > 0 && sh > 0) c.drawImage(this.zone.bg, sx, sy, sw, sh, sx, sy, sw, sh);
-    }
-
-    // ground items
-    for (const g of this.ground) {
-      if (g.gold) drawCoin(c, g.x, g.y, g.t * 6 + this.time);
-      else if (g.itemId) {
-        const r = ITEMS[g.itemId];
-        c.fillStyle = "rgba(20,16,30,0.3)"; c.beginPath(); c.ellipse(g.x, g.y + 5, 6, 2, 0, 0, Math.PI * 2); c.fill();
-        c.fillStyle = r ? rarityGlow(r.rarity) : "#fff";
-        const b = Math.sin(this.time * 4 + g.x) * 2;
-        c.fillRect(g.x - 5, g.y - 5 - b, 10, 10);
-        c.strokeStyle = "rgba(255,255,255,0.5)"; c.strokeRect(g.x - 5, g.y - 5 - b, 10, 10);
-      }
-    }
-
-    // rings (under entities)
-    for (const r of this.rings) {
-      c.globalAlpha = Math.max(0, r.life * 1.6); c.strokeStyle = r.color; c.lineWidth = 3;
-      c.beginPath(); c.arc(r.x, r.y, r.r, 0, Math.PI * 2); c.stroke(); c.globalAlpha = 1;
-    }
-
-    // entities sorted by feet
-    const drawList: Entity[] = [...this.entities, this.player];
-    drawList.sort((a, b) => a.sortY - b.sortY);
-    for (const e of drawList) e.render(c, this);
-
-    // projectiles + particles + numbers (above)
-    for (const pr of this.projectiles) pr.render(c);
-    for (const pa of this.particles) pa.render(c);
-    for (const d of this.damageNumbers) d.render(c);
-
-    // portal labels
-    c.font = "bold 11px 'Segoe UI', sans-serif";
-    for (const p of this.zone.portals) {
-      const lx = (p.x + p.w / 2) * TILE, ly = (p.y + p.h / 2) * TILE;
-      nameTag(c, clamp(lx, cam.ox + 40, cam.ox + cam.vw - 40), ly, p.label, COL.parchment);
-    }
-
-    c.restore();
-  }
+  // Rendering is owned by view3d.ts (the 3D view reads this world's state).
 }
 
 // Map an NPC back to its quest-giver id (by name → stable id).

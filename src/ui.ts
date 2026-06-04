@@ -41,6 +41,9 @@ export class UI implements GameUI {
   private hotbar = el("div", "hotbar");
   private vignette = el("div", "vignette");
   private levelBanner = el("div", "level-banner hidden");
+  private runInfo = el("div", "run-info");
+  private runTimerEl = el("div", "run-timer", "0:00.0");
+  private codeEl = el("div", "run-code");
 
   private panel: Panel = null;
   private dialogueNpc: Npc | null = null;
@@ -91,7 +94,9 @@ export class UI implements GameUI {
     chatWrap.appendChild(el("div", "chat-title", "World Chat"));
     chatWrap.appendChild(this.chatBox);
 
-    this.hud.append(frame, right, chatWrap, this.hotbar);
+    const obj = el("div", "run-obj", "⚔ Slay the Ancient Golem");
+    this.runInfo.append(this.runTimerEl, obj, this.codeEl);
+    this.hud.append(frame, right, chatWrap, this.hotbar, this.runInfo);
     this.overlay.appendChild(this.modal);
     this.overlay.onclick = (e) => { if (e.target === this.overlay) this.closePanel(); };
     this.levelBanner.innerHTML = "";
@@ -151,6 +156,7 @@ export class UI implements GameUI {
     const online = this.world.sim.records.length + 1;
     this.onlineEl.innerHTML = `<span class="dot"></span>${online} online`;
     this.zoneEl.textContent = this.world.zone?.name ?? "";
+    this.codeEl.innerHTML = `SEED <b>${this.world.code}</b>`;
     if (this.panel) this.renderPanel(); // keep open panel fresh
   }
 
@@ -158,6 +164,7 @@ export class UI implements GameUI {
   update(dt: number) {
     const p = this.world.player;
     const s = p.stats;
+    this.runTimerEl.textContent = fmtTime(this.world.runTime);
     this.hpFill.style.width = `${Math.max(0, (s.hp / s.maxHp) * 100)}%`;
     this.mpFill.style.width = `${Math.max(0, (s.mp / s.maxMp) * 100)}%`;
     const lx = levelFromXp(p.xp);
@@ -475,13 +482,15 @@ export class UI implements GameUI {
     this.header("How to Play", "Aethermoor — a Massively Singleplayer RPG");
     this.modal.appendChild(el("div", "help",
       `<div class="help-grid">
-        <div><kbd>W A S D</kbd> / Arrows<span>Move</span></div>
-        <div><kbd>Space</kbd> / Click<span>Basic attack (aims at cursor)</span></div>
+        <div><kbd>W A S D</kbd> / Arrows<span>Move (relative to camera)</span></div>
+        <div><kbd>Mouse</kbd><span>Look around (click to capture)</span></div>
+        <div><kbd>Space</kbd> / Click<span>Basic attack (auto-aims ahead)</span></div>
         <div><kbd>Q</kbd> <kbd>E</kbd><span>Class abilities</span></div>
         <div><kbd>R</kbd><span>Quaff a potion</span></div>
+        <div><kbd>Wheel</kbd><span>Zoom the camera</span></div>
         <div><kbd>F</kbd> / Enter<span>Talk to NPCs (! = quest)</span></div>
         <div><kbd>I C J L M H</kbd><span>Bag · Hero · Quests · Ranks · Map · Help</span></div>
-        <div><kbd>Esc</kbd><span>Close panels</span></div>
+        <div><kbd>Esc</kbd><span>Close panels / release mouse</span></div>
       </div>
       <p>Hunt monsters in the <b>Greenfields</b>, <b>Darkwood</b> and <b>Sunken Ruins</b> to level up and gear out.
       The other adventurers you see are simulated — they hunt, level, chat and climb the leaderboard right alongside you.
@@ -544,6 +553,10 @@ function dot(c: CanvasRenderingContext2D, x: number, y: number, r: number, color
   c.fillStyle = color; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
 }
 function esc(s: string) { return s.replace(/[&<>]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[m]!)); }
+export function fmtTime(s: number) {
+  const m = Math.floor(s / 60);
+  return `${m}:${(s % 60).toFixed(1).padStart(4, "0")}`;
+}
 
 // keep GUILDS imported for potential future guild panel; reference to avoid unused warning
 void GUILDS;
